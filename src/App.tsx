@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VoiceAligner } from './core/aligner';
-import { formatElapsedTime } from './core/timer';
+import { CumulativeTimer, formatElapsedTime } from './core/timer';
 import type { AlignmentStatus } from './core/types';
 import { usePwa } from './hooks/usePwa';
 import { parseDocumentFile } from './parsers';
@@ -69,7 +69,7 @@ export function App() {
   const alignerRef = useRef<VoiceAligner | null>(null);
   const engineRef = useRef<SpeechEngine | null>(null);
   const demoPlayerRef = useRef<DemoTtsPlayer | null>(null);
-  const timerStartRef = useRef<number | null>(null);
+  const timerRef = useRef<CumulativeTimer>(new CumulativeTimer());
 
   // Pre-warm system TTS voices (Chrome populates getVoices asynchronously)
   useEffect(() => {
@@ -78,25 +78,21 @@ export function App() {
     }
   }, []);
 
-  // Live session speaking timer: starts at 00:00 on mic/demo start, freezes on stop
+  // Cumulative speaking timer: pauses on stop, resumes from accumulated time on next start,
+  // and resets only on Reset (R) or script switch.
   const isSessionActive = isPlaying || isSimulating;
   useEffect(() => {
+    const timer = timerRef.current;
     if (!isSessionActive) {
-      if (timerStartRef.current !== null) {
-        setElapsedMs(performance.now() - timerStartRef.current);
-        timerStartRef.current = null;
-      }
+      setElapsedMs(timer.pause());
       return;
     }
 
-    const startAt = performance.now();
-    timerStartRef.current = startAt;
-    setElapsedMs(0);
+    timer.start();
+    setElapsedMs(timer.getElapsedMs());
 
     const id = window.setInterval(() => {
-      if (timerStartRef.current !== null) {
-        setElapsedMs(performance.now() - timerStartRef.current);
-      }
+      setElapsedMs(timer.getElapsedMs());
     }, 250);
 
     return () => clearInterval(id);
@@ -128,8 +124,8 @@ export function App() {
     setAlignmentStatus('idle');
     setHeardText('');
     setStatusNote('');
+    timerRef.current.reset(false);
     setElapsedMs(0);
-    timerStartRef.current = null;
   }, [activeScript?.id]);
 
   const notify = useCallback(
@@ -299,12 +295,8 @@ export function App() {
     setAlignmentStatus('idle');
     setHeardText('');
     setStatusNote('Reset to start');
+    timerRef.current.reset(isPlaying);
     setElapsedMs(0);
-    if (isPlaying) {
-      timerStartRef.current = performance.now();
-    } else {
-      timerStartRef.current = null;
-    }
   }, [stopSimulator, isPlaying]);
 
   const handleStep = useCallback(

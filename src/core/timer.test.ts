@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { indexScript } from './tokenizer';
-import { formatElapsedTime } from './timer';
+import { CumulativeTimer, formatElapsedTime } from './timer';
 import { buildDemoPhrases } from '../speech/demoTtsPlayer';
 
 describe('formatElapsedTime', () => {
@@ -14,6 +14,27 @@ describe('formatElapsedTime', () => {
 
   it('clamps negative values to 00:00', () => {
     expect(formatElapsedTime(-5000)).toBe('00:00');
+  });
+});
+
+describe('CumulativeTimer', () => {
+  it('accumulates time across stop and resume cycles until explicitly reset', () => {
+    const timer = new CumulativeTimer();
+    timer.start(1000);
+    expect(timer.getElapsedMs(4000)).toBe(3000);
+
+    // Pause at t=4000 -> freezes at 3000ms
+    expect(timer.pause(4000)).toBe(3000);
+    expect(timer.getElapsedMs(9000)).toBe(3000);
+
+    // Resume at t=9000 -> continues from 3000ms (does NOT reset to 0!)
+    timer.start(9000);
+    expect(timer.getElapsedMs(11500)).toBe(5500);
+    expect(timer.pause(11500)).toBe(5500);
+
+    // Explicit reset returns to 0
+    timer.reset();
+    expect(timer.getElapsedMs(12000)).toBe(0);
   });
 });
 
