@@ -135,7 +135,7 @@ export function FloatingHud({
           <strong>{isSimulating ? 'DEMO VOICE' : badge.label}</strong>
           <span
             className={`hud-timer ${isActiveRun ? 'live' : ''}`}
-            title="Speaking timer (Start → Stop)"
+            title="Cumulative speaking time (continues across Stop/Start; resets on Reset)"
           >
             <Timer size={12} aria-hidden="true" />
             {formatElapsedTime(elapsedMs)}
