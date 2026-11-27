@@ -1036,6 +1036,25 @@ dialog[open] {
   text-decoration: underline;
 }
 
+.hf-progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ── Prompter Stage (Embedded & Fullscreen) ── */
 .stage-shell {
   position: relative;

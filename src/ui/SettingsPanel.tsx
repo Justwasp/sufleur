@@ -2,17 +2,25 @@ import {
   AlignCenter,
   AlignLeft,
   BookmarkPlus,
+  CheckCircle2,
+  Cpu,
+  Download,
   ExternalLink,
   FlipHorizontal2,
   FlipVertical2,
+  Loader2,
   Mic,
   Palette,
   Trash2,
   Upload,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { hfWorkerClient } from '../speech/hfWorkerClient';
 import {
+  HUGGINGFACE_ASR_MODELS,
   SUPPORTED_LANGUAGES,
+  type HfDevicePreference,
+  type HfDownloadProgress,
   type SpeechEngineConfig,
   type SpeechEngineKind,
 } from '../speech/types';
@@ -52,10 +60,16 @@ const ENGINE_OPTIONS: Array<{
     desc: 'Built into Chrome/Edge/Safari. Instant word streaming, zero setup, no API key.',
   },
   {
+    kind: 'huggingface-local',
+    title: 'Hugging Face AI (Free Offline)',
+    badge: '1-CLICK HF',
+    desc: 'Download free Moonshine or Whisper ONNX models from Hugging Face right in browser (WebGPU/WASM, cached offline).',
+  },
+  {
     kind: 'vosk-offline',
     title: 'Vosk Offline (WASM)',
-    badge: '100% LOCAL',
-    desc: 'Runs completely offline in WebAssembly. Upload a small English or Russian model archive.',
+    badge: 'LOCAL FILE',
+    desc: 'Runs offline in WebAssembly from a manually uploaded Vosk archive (use Chrome/Safari, not embedded webviews).',
   },
   {
     kind: 'deepgram-cloud',
@@ -98,11 +112,54 @@ export function SettingsPanel({
   const [tab, setTab] = useState<'display' | 'speech'>('display');
   const [presetName, setPresetName] = useState('');
   const [voskModels, setVoskModels] = useState<StoredVoskModelMeta[]>([]);
+  const [hfProgress, setHfProgress] = useState<HfDownloadProgress>(() =>
+    hfWorkerClient.getState(),
+  );
   const voskInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     void listVoskModels().then(setVoskModels);
+    return hfWorkerClient.subscribe(setHfProgress);
   }, []);
+
+  const activeHfModelId =
+    speech.hfCustomModelId.trim() ||
+    speech.hfModelId ||
+    HUGGINGFACE_ASR_MODELS[0].id;
+
+  const isHfBusy =
+    hfProgress.status === 'downloading' || hfProgress.status === 'loading';
+  const isActiveHfReady =
+    hfProgress.status === 'ready' && hfProgress.modelId === activeHfModelId;
+
+  const handleDownloadHfModel = async () => {
+    try {
+      const dev = await hfWorkerClient.loadModel(
+        activeHfModelId,
+        speech.hfDevice || 'auto',
+      );
+      onNotify(
+        `Hugging Face model "${activeHfModelId}" loaded (${dev.toUpperCase()}) and cached offline!`,
+        'success',
+      );
+    } catch (err) {
+      onNotify(
+        `HF download failed: ${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      );
+    }
+  };
+
+  const handleClearHfCache = async () => {
+    try {
+      if ('caches' in window) {
+        await caches.delete('transformers-cache');
+        onNotify('Cleared cached Hugging Face models from browser storage.', 'info');
+      }
+    } catch {
+      onNotify('Could not clear Hugging Face cache in this browser.', 'error');
+    }
+  };
 
   const contrastRatio = getContrastRatio(appearance.backgroundColor, appearance.textColor);
   const contrastRating = getContrastRating(contrastRatio);
@@ -500,7 +557,179 @@ export function SettingsPanel({
             {speech.kind === 'web-speech' && !webSpeechOk && (
               <div className="info-box" style={{ borderColor: 'rgba(239,68,68,0.5)' }}>
                 <strong>Browser Note:</strong> Web Speech API was not detected in this browser.
-                Use Chrome/Edge/Safari, or choose Vosk Offline, Deepgram Cloud, or Auto-Scroll.
+                Use Chrome/Edge/Safari, or choose Hugging Face AI, Vosk Offline, Deepgram Cloud, or Auto-Scroll.
+              </div>
+            )}
+
+            {speech.kind === 'huggingface-local' && (
+              <div className="control-group">
+                <span className="group-label">
+                  <span>Free Hugging Face Models</span>
+                  <span className="format-pill">CACHE OFFLINE</span>
+                </span>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {HUGGINGFACE_ASR_MODELS.map((m) => {
+                    const selected =
+                      !speech.hfCustomModelId.trim() && speech.hfModelId === m.id;
+                    const loaded =
+                      hfProgress.status === 'ready' && hfProgress.modelId === m.id;
+
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={`engine-card ${selected ? 'active' : ''}`}
+                        onClick={() =>
+                          onUpdateSpeech({ hfModelId: m.id, hfCustomModelId: '' })
+                        }
+                      >
+                        <div className="engine-card-head">
+                          <span>{m.label}</span>
+                          <span style={{ display: 'inline-flex', gap: 4 }}>
+                            <span className="format-pill">{m.languages}</span>
+                            <span className="format-pill">{m.sizeLabel}</span>
+                          </span>
+                        </div>
+                        <span className="engine-card-desc">
+                          {m.description}
+                          {loaded && (
+                            <strong style={{ color: '#34d399', marginLeft: 6 }}>
+                              · Loaded
+                            </strong>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="field-row">
+                  <label className="field-row-header" htmlFor="hf-custom-id">
+                    Or any ONNX ASR repo on Hugging Face
+                  </label>
+                  <input
+                    id="hf-custom-id"
+                    type="text"
+                    className="text-input"
+                    placeholder="e.g. onnx-community/whisper-small.en"
+                    value={speech.hfCustomModelId}
+                    onChange={(e) =>
+                      onUpdateSpeech({ hfCustomModelId: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="field-row">
+                  <label className="field-row-header" htmlFor="hf-device">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <Cpu size={13} aria-hidden="true" /> Compute Backend
+                    </span>
+                  </label>
+                  <select
+                    id="hf-device"
+                    className="select-input"
+                    value={speech.hfDevice}
+                    onChange={(e) =>
+                      onUpdateSpeech({
+                        hfDevice: e.target.value as HfDevicePreference,
+                      })
+                    }
+                  >
+                    <option value="auto">Auto (WebGPU GPU → WASM CPU fallback)</option>
+                    <option value="webgpu">WebGPU (Fastest on Apple Silicon / GPU)</option>
+                    <option value="wasm">WASM (Universal CPU fallback)</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                    disabled={isHfBusy}
+                    onClick={() => void handleDownloadHfModel()}
+                  >
+                    {isHfBusy ? (
+                      <>
+                        <Loader2 size={14} className="spin-icon" aria-hidden="true" />
+                        Downloading {hfProgress.progress}%
+                      </>
+                    ) : isActiveHfReady ? (
+                      <>
+                        <CheckCircle2 size={14} aria-hidden="true" />
+                        Ready ({hfProgress.deviceUsed?.toUpperCase()})
+                      </>
+                    ) : (
+                      <>
+                        <Download size={14} aria-hidden="true" />
+                        Download &amp; Load Model
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-icon"
+                    title="Clear cached Hugging Face models"
+                    aria-label="Clear cached Hugging Face models"
+                    onClick={() => void handleClearHfCache()}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                {(isHfBusy || isActiveHfReady || hfProgress.status === 'error') && (
+                  <div className="info-box">
+                    {isHfBusy && (
+                      <>
+                        <div className="field-row-header">
+                          <span style={{ fontSize: 11.5 }}>
+                            {hfProgress.file || hfProgress.message || 'Fetching ONNX weights...'}
+                          </span>
+                          <span className="field-value">{hfProgress.progress}%</span>
+                        </div>
+                        <progress
+                          className="hf-progress"
+                          max={100}
+                          value={hfProgress.progress}
+                        />
+                        {hfProgress.totalBytes && hfProgress.loadedBytes ? (
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-2)' }}>
+                            {(hfProgress.loadedBytes / (1024 * 1024)).toFixed(1)} MB /{' '}
+                            {(hfProgress.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                    {isActiveHfReady && (
+                      <span style={{ color: '#34d399' }}>
+                        ✓ Model cached locally in browser — works 100% offline. Click{' '}
+                        <strong>Start Mic</strong> to track your voice.
+                      </span>
+                    )}
+                    {hfProgress.status === 'error' && (
+                      <span style={{ color: '#f87171' }}>
+                        Error: {hfProgress.message}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="info-box">
+                  <span>
+                    Models download once directly from{' '}
+                    <a
+                      href="https://huggingface.co/onnx-community"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Hugging Face (onnx-community)
+                    </a>{' '}
+                    with zero API key, run 100% on your device, and stay cached for offline use.
+                    For best mic &amp; WebGPU support, open in Chrome or Safari.
+                  </span>
+                </div>
               </div>
             )}
 
