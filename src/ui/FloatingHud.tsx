@@ -9,12 +9,14 @@ import {
   Pause,
   Play,
   Plus,
-  Radio,
   RotateCcw,
-  Sparkles,
+  Timer,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { formatElapsedTime } from '../core/timer';
 import type { AlignmentStatus } from '../core/types';
 import type { EngineConnectionState, SpeechEngineKind } from '../speech/types';
 import type { MirrorMode } from '../store/types';
@@ -28,6 +30,7 @@ interface FloatingHudProps {
   statusNote: string;
   heardText: string;
   audioLevel: number;
+  elapsedMs: number;
   mirrorMode: MirrorMode;
   fontSize: number;
   autoScrollWpm: number;
@@ -75,6 +78,7 @@ export function FloatingHud({
   statusNote,
   heardText,
   audioLevel,
+  elapsedMs,
   mirrorMode,
   fontSize,
   autoScrollWpm,
@@ -117,16 +121,27 @@ export function FloatingHud({
 
   const badge = getStatusBadge(engineKind, engineState, alignmentStatus);
 
+  const isActiveRun = isPlaying || isSimulating;
+  const showTelemetry =
+    isActiveRun || elapsedMs > 0 || Boolean(heardText) || Boolean(statusNote);
+
   return (
     <div
       className={`floating-hud ${idleDim ? 'dimmed' : ''} ${isFullscreenStage ? '' : 'embedded'}`}
     >
-      {(isPlaying || isSimulating || heardText || statusNote) && (
+      {showTelemetry && (
         <div className="hud-telemetry-pill" role="status" aria-live="polite">
           <span className={`status-dot ${isSimulating ? 'signal' : badge.dotClass}`} />
           <strong>{isSimulating ? 'DEMO VOICE' : badge.label}</strong>
-          {engineKind !== 'auto-scroll' && (
-            <div className="vu-meter" title="Microphone level">
+          <span
+            className={`hud-timer ${isActiveRun ? 'live' : ''}`}
+            title="Speaking timer (Start → Stop)"
+          >
+            <Timer size={12} aria-hidden="true" />
+            {formatElapsedTime(elapsedMs)}
+          </span>
+          {(engineKind !== 'auto-scroll' || isSimulating) && (
+            <div className="vu-meter" title="Audio level">
               <div
                 className="vu-meter-fill"
                 style={{ width: `${Math.round(Math.min(1, audioLevel) * 100)}%` }}
@@ -160,13 +175,17 @@ export function FloatingHud({
           type="button"
           className={`btn btn-sm ${isSimulating ? 'btn-primary' : ''}`}
           onClick={onToggleSimulate}
-          title="Simulate live speech (including repeats & jumps) without microphone"
+          title="Play voiced demo (speaks script aloud & demonstrates repeat protection)"
         >
-          {isSimulating ? <Radio size={14} /> : <Sparkles size={14} />}
+          {isSimulating ? (
+            <VolumeX size={14} aria-hidden="true" />
+          ) : (
+            <Volume2 size={14} aria-hidden="true" />
+          )}
           {isSimulating
             ? 'Stop'
             : isFullscreenStage
-              ? 'Simulate Voice'
+              ? 'Demo Voice'
               : 'Demo'}
         </button>
 

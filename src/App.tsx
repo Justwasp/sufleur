@@ -14,9 +14,11 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VoiceAligner } from './core/aligner';
+import { formatElapsedTime } from './core/timer';
 import type { AlignmentStatus } from './core/types';
 import { usePwa } from './hooks/usePwa';
 import { parseDocumentFile } from './parsers';
+import { DemoTtsPlayer } from './speech/demoTtsPlayer';
 import { createSpeechEngine } from './speech/engineFactory';
 import type { EngineConnectionState, SpeechEngine } from './speech/types';
 import { loadPersistedState, savePersistedState } from './store/storage';
@@ -62,10 +64,43 @@ export function App() {
   const [statusNote, setStatusNote] = useState('');
   const [heardText, setHeardText] = useState('');
   const [audioLevel, setAudioLevel] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   const alignerRef = useRef<VoiceAligner | null>(null);
   const engineRef = useRef<SpeechEngine | null>(null);
-  const simTimerRef = useRef<number | null>(null);
+  const demoPlayerRef = useRef<DemoTtsPlayer | null>(null);
+  const timerStartRef = useRef<number | null>(null);
+
+  // Pre-warm system TTS voices (Chrome populates getVoices asynchronously)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+    }
+  }, []);
+
+  // Live session speaking timer: starts at 00:00 on mic/demo start, freezes on stop
+  const isSessionActive = isPlaying || isSimulating;
+  useEffect(() => {
+    if (!isSessionActive) {
+      if (timerStartRef.current !== null) {
+        setElapsedMs(performance.now() - timerStartRef.current);
+        timerStartRef.current = null;
+      }
+      return;
+    }
+
+    const startAt = performance.now();
+    timerStartRef.current = startAt;
+    setElapsedMs(0);
+
+    const id = window.setInterval(() => {
+      if (timerStartRef.current !== null) {
+        setElapsedMs(performance.now() - timerStartRef.current);
+      }
+    }, 250);
+
+    return () => clearInterval(id);
+  }, [isSessionActive]);
 
   // Persist state changes cleanly to localStorage
   useEffect(() => {
@@ -87,12 +122,14 @@ export function App() {
     return aligner.getScript();
   }, [activeScript?.content, state.appearance.ignoreStageDirections]);
 
-  // Reset cursor when switching to a different script ID
+  // Reset cursor and session timer when switching to a different script ID
   useEffect(() => {
     setActiveTokenIndex(-1);
     setAlignmentStatus('idle');
     setHeardText('');
     setStatusNote('');
+    setElapsedMs(0);
+    timerStartRef.current = null;
   }, [activeScript?.id]);
 
   const notify = useCallback(
@@ -107,11 +144,9 @@ export function App() {
   );
 
   const stopSimulator = useCallback(() => {
-    if (simTimerRef.current !== null) {
-      clearInterval(simTimerRef.current);
-      simTimerRef.current = null;
-    }
+    demoPlayerRef.current?.stop();
     setIsSimulating(false);
+    setAudioLevel(0);
   }, []);
 
   const stopPlayback = useCallback(async () => {
@@ -173,15 +208,15 @@ export function App() {
     }
   }, [isPlaying, startPlayback, stopPlayback]);
 
-  // Cleanup active mic / engine / simulator on unmount
+  // Cleanup active mic / engine / voiced demo player on unmount
   useEffect(() => {
     return () => {
-      if (simTimerRef.current !== null) clearInterval(simTimerRef.current);
+      demoPlayerRef.current?.stop();
       if (engineRef.current) void engineRef.current.stop();
     };
   }, []);
 
-  // Built-in Demo Voice Simulator (exercises real VoiceAligner including a repeat & forward reading)
+  // Voiced Demo Simulator (speaks script aloud via Web SpeechSynthesis + feeds VoiceAligner word-by-word)
   const handleToggleSimulate = useCallback(() => {
     if (isSimulating) {
       stopSimulator();
@@ -189,62 +224,60 @@ export function App() {
     }
     void stopPlayback();
 
-    const speakableTokens = indexedScript.tokens.filter((t) => t.isSpeakable);
-    if (speakableTokens.length === 0) return;
-
-    setIsSimulating(true);
-    setAlignmentStatus('tracking');
-
     const aligner = alignerRef.current;
-    let pointer = Math.max(
-      0,
-      speakableTokens.findIndex((t) => t.index > activeTokenIndex),
+    if (!aligner || indexedScript.tokens.length === 0) return;
+
+    // If already at the very end, restart Demo cleanly from the beginning
+    const startAfter =
+      activeTokenIndex >= indexedScript.tokens.length - 2 ? -1 : activeTokenIndex;
+    if (startAfter === -1 && activeTokenIndex >= 0) {
+      aligner.reset();
+      setActiveTokenIndex(-1);
+    }
+
+    if (!demoPlayerRef.current) {
+      demoPlayerRef.current = new DemoTtsPlayer();
+    }
+
+    const started = demoPlayerRef.current.start(
+      indexedScript.tokens,
+      startAfter,
+      state.speech.language,
+      {
+        onTranscript: (update, isRepeatDemo) => {
+          setHeardText(
+            isRepeatDemo ? `[Repeat test] ${update.text}` : update.text,
+          );
+          const curAligner = alignerRef.current;
+          if (!curAligner) return;
+          const res = curAligner.processTranscript(update);
+          setAlignmentStatus(res.status);
+          if (res.note) setStatusNote(res.note);
+          if (res.moved) {
+            setActiveTokenIndex(res.tokenIndex);
+          }
+        },
+        onAudioLevel: (lvl) => setAudioLevel(lvl),
+        onDone: () => {
+          setIsSimulating(false);
+          setAudioLevel(0);
+        },
+      },
     );
-    let utteranceId = 100;
-    let didDemoRepeat = false;
 
-    simTimerRef.current = window.setInterval(() => {
-      if (!aligner || pointer >= speakableTokens.length) {
-        stopSimulator();
-        return;
-      }
-
-      // Demonstrate repeat-protection once around word 12 by repeating the previous 3 words
-      if (!didDemoRepeat && pointer >= 12 && pointer <= 15) {
-        didDemoRepeat = true;
-        const repeatedChunk = speakableTokens
-          .slice(Math.max(0, pointer - 3), pointer)
-          .map((t) => t.raw)
-          .join(' ');
-        setHeardText(`[Repeat test] ${repeatedChunk}`);
-        const res = aligner.processTranscript({
-          utteranceId: utteranceId++,
-          isFinal: true,
-          text: repeatedChunk,
-        });
-        setAlignmentStatus(res.status);
-        setStatusNote(res.note ?? 'Repeat guard active');
-        return;
-      }
-
-      const chunk = speakableTokens
-        .slice(pointer, pointer + 3)
-        .map((t) => t.raw)
-        .join(' ');
-      pointer += 3;
-      setHeardText(chunk);
-      const res = aligner.processTranscript({
-        utteranceId: utteranceId++,
-        isFinal: true,
-        text: chunk,
-      });
-      setAlignmentStatus(res.status);
-      if (res.note) setStatusNote(res.note);
-      if (res.moved) {
-        setActiveTokenIndex(res.tokenIndex);
-      }
-    }, 850);
-  }, [isSimulating, stopSimulator, stopPlayback, indexedScript.tokens, activeTokenIndex]);
+    if (started) {
+      setIsSimulating(true);
+      setAlignmentStatus('tracking');
+      setStatusNote('Speaking demo aloud...');
+    }
+  }, [
+    isSimulating,
+    stopSimulator,
+    stopPlayback,
+    indexedScript.tokens,
+    activeTokenIndex,
+    state.speech.language,
+  ]);
 
   const handleSeekToken = useCallback((tokenIndex: number) => {
     const res = alignerRef.current?.seekToToken(tokenIndex);
@@ -254,12 +287,19 @@ export function App() {
   }, []);
 
   const handleReset = useCallback(() => {
+    stopSimulator();
     alignerRef.current?.reset();
     setActiveTokenIndex(-1);
     setAlignmentStatus('idle');
     setHeardText('');
     setStatusNote('Reset to start');
-  }, []);
+    setElapsedMs(0);
+    if (isPlaying) {
+      timerStartRef.current = performance.now();
+    } else {
+      timerStartRef.current = null;
+    }
+  }, [stopSimulator, isPlaying]);
 
   const handleStep = useCallback(
     (deltaTokens: number) => {
@@ -498,6 +538,7 @@ export function App() {
       statusNote={statusNote}
       heardText={heardText}
       audioLevel={audioLevel}
+      elapsedMs={elapsedMs}
       mirrorMode={state.appearance.mirrorMode}
       fontSize={state.appearance.fontSize}
       autoScrollWpm={state.appearance.autoScrollWpm}
@@ -695,6 +736,11 @@ export function App() {
               <span>
                 Est. <strong>{formattedDuration}</strong>
               </span>
+              {(isSessionActive || elapsedMs > 0) && (
+                <span className={`session-timer-inline ${isSessionActive ? 'live' : ''}`}>
+                  Time <strong>{formatElapsedTime(elapsedMs)}</strong>
+                </span>
+              )}
               <span>
                 Lang <strong>{state.speech.language}</strong>
               </span>

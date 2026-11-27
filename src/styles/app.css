@@ -1232,6 +1232,37 @@ dialog[open] {
   flex-shrink: 0;
 }
 
+.hud-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-0);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hud-timer.live {
+  background: var(--tally-soft);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.session-timer-inline {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-timer-inline.live strong {
+  color: var(--accent-hover);
+}
+
 .hud-heard-text {
   overflow: hidden;
   text-overflow: ellipsis;
