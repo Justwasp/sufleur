@@ -45,6 +45,18 @@ interface ToastMessage {
 
 const MIRROR_CYCLE: MirrorMode[] = ['none', 'horizontal', 'vertical', 'both'];
 
+function tryLockPortraitOrientation(): void {
+  if (typeof window === 'undefined' || typeof screen === 'undefined') return;
+  // Only attempt portrait lock on phone-sized viewports (never lock desktop/iPad landscape monitors)
+  if (Math.min(window.innerWidth, window.innerHeight) > 640) return;
+  const orientation = screen.orientation as ScreenOrientation & {
+    lock?: (orientation: string) => Promise<void>;
+  };
+  if (orientation && typeof orientation.lock === 'function') {
+    orientation.lock('portrait-primary').catch(() => undefined);
+  }
+}
+
 export function App() {
   const [state, setState] = useState<PersistedState>(() => loadPersistedState());
   const [viewMode, setViewMode] = useState<CenterViewMode>('split');
@@ -71,11 +83,12 @@ export function App() {
   const demoPlayerRef = useRef<DemoTtsPlayer | null>(null);
   const timerRef = useRef<CumulativeTimer>(new CumulativeTimer());
 
-  // Pre-warm system TTS voices (Chrome populates getVoices asynchronously)
+  // Pre-warm system TTS voices & request portrait orientation lock on phones where supported
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.getVoices();
     }
+    tryLockPortraitOrientation();
   }, []);
 
   // Cumulative speaking timer: pauses on stop, resumes from accumulated time on next start,
@@ -332,7 +345,12 @@ export function App() {
     if (!isStageMode) {
       setIsStageMode(true);
       if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen().catch(() => undefined);
+        document.documentElement
+          .requestFullscreen()
+          .then(() => tryLockPortraitOrientation())
+          .catch(() => undefined);
+      } else {
+        tryLockPortraitOrientation();
       }
     } else {
       setIsStageMode(false);

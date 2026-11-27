@@ -245,7 +245,7 @@ dialog[open] {
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 900px), (max-height: 500px) {
   .studio-shell {
     grid-template-rows: auto minmax(0, 1fr) auto;
   }
