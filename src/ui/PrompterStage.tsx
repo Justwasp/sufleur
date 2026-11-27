@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SmoothScrollController } from '../core/scrollController';
 import type { ScriptToken } from '../core/types';
 import type { AppearanceSettings } from '../store/types';
@@ -27,6 +27,18 @@ export function PrompterStage({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tokenRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   const scrollCtrlRef = useRef<SmoothScrollController | null>(null);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 640,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 640px)');
+    const onChange = () => setIsNarrowViewport(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   if (!scrollCtrlRef.current) {
     scrollCtrlRef.current = new SmoothScrollController();
@@ -107,8 +119,16 @@ export function PrompterStage({
       : `mirror-${appearance.mirrorMode}`;
 
   const effectiveFontSize = isFullscreenStage
-    ? appearance.fontSize
-    : Math.max(22, Math.round(appearance.fontSize * 0.56));
+    ? isNarrowViewport
+      ? Math.max(24, Math.round(appearance.fontSize * 0.68))
+      : appearance.fontSize
+    : isNarrowViewport
+      ? Math.max(22, Math.round(appearance.fontSize * 0.54))
+      : Math.max(22, Math.round(appearance.fontSize * 0.56));
+
+  const effectiveHorizontalPadding = isNarrowViewport
+    ? Math.min(appearance.horizontalPadding, 10)
+    : appearance.horizontalPadding;
 
   return (
     <div
@@ -144,8 +164,8 @@ export function PrompterStage({
               fontSize: `${effectiveFontSize}px`,
               lineHeight: appearance.lineHeight,
               letterSpacing: `${appearance.letterSpacing}em`,
-              paddingLeft: `${appearance.horizontalPadding}%`,
-              paddingRight: `${appearance.horizontalPadding}%`,
+              paddingLeft: `${effectiveHorizontalPadding}%`,
+              paddingRight: `${effectiveHorizontalPadding}%`,
               textAlign: appearance.textAlign,
               color: appearance.textColor,
             }}

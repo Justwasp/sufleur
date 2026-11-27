@@ -1,15 +1,21 @@
 import {
   Columns2,
+  Download,
   Edit3,
   Eye,
+  FileText,
   HelpCircle,
   Maximize2,
+  RefreshCw,
+  SlidersHorizontal,
   Upload,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VoiceAligner } from './core/aligner';
 import type { AlignmentStatus } from './core/types';
+import { usePwa } from './hooks/usePwa';
 import { parseDocumentFile } from './parsers';
 import { createSpeechEngine } from './speech/engineFactory';
 import type { EngineConnectionState, SpeechEngine } from './speech/types';
@@ -27,6 +33,7 @@ import { SettingsPanel } from './ui/SettingsPanel';
 import { StudioSidebar } from './ui/StudioSidebar';
 
 type CenterViewMode = 'split' | 'edit' | 'preview';
+type MobileTab = 'scripts' | 'editor' | 'prompter' | 'settings';
 
 interface ToastMessage {
   id: number;
@@ -39,10 +46,12 @@ const MIRROR_CYCLE: MirrorMode[] = ['none', 'horizontal', 'vertical', 'both'];
 export function App() {
   const [state, setState] = useState<PersistedState>(() => loadPersistedState());
   const [viewMode, setViewMode] = useState<CenterViewMode>('split');
+  const [mobileTab, setMobileTab] = useState<MobileTab>('prompter');
   const [isStageMode, setIsStageMode] = useState(false);
   const [hotkeysOpen, setHotkeysOpen] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const pwa = usePwa();
 
   // Live prompter runtime state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -530,37 +539,78 @@ export function App() {
           <div className="brand-badge">S</div>
           <span className="brand-title">Sufleur</span>
           <span className="brand-sub">VOICE TELEPROMPTER STUDIO</span>
+          {pwa.isOffline && (
+            <span className="offline-pill" title="Working offline (cached PWA)">
+              <WifiOff size={12} aria-hidden="true" /> Offline
+            </span>
+          )}
         </div>
 
         <div className="topbar-actions">
+          {pwa.needRefresh && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void pwa.applyUpdate()}
+              title="Update Sufleur to the newest version"
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              <span className="hide-xs">Update</span>
+            </button>
+          )}
+
+          {!pwa.isStandalone && (pwa.canInstallNative || pwa.isIosBrowser) && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={async () => {
+                const outcome = await pwa.triggerInstall();
+                if (outcome === 'ios-hint') {
+                  notify(
+                    'To install on iPhone/iPad: tap Share (↑) in Safari, then choose "Add to Home Screen".',
+                    'info',
+                  );
+                } else if (outcome === 'accepted') {
+                  notify('Sufleur installed as a standalone app!', 'success');
+                }
+              }}
+              title="Install Sufleur as an offline PWA app"
+            >
+              <Download size={14} aria-hidden="true" />
+              <span className="hide-xs">Install</span>
+            </button>
+          )}
+
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm hide-mobile"
             onClick={() => setHotkeysOpen(true)}
             title="Keyboard & Presenter Shortcuts (?)"
           >
-            <HelpCircle size={15} />
-            Shortcuts
+            <HelpCircle size={15} aria-hidden="true" />
+            <span>Shortcuts</span>
           </button>
 
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary topbar-launch-btn"
             onClick={handleToggleFullscreen}
           >
-            <Maximize2 size={15} />
-            Launch Prompter Stage
+            <Maximize2 size={15} aria-hidden="true" />
+            <span className="hide-xs">Launch Stage</span>
+            <span className="show-xs">Stage</span>
           </button>
         </div>
       </header>
 
-      <main className="studio-workspace">
+      <main className={`studio-workspace mobile-tab-${mobileTab}`}>
         <StudioSidebar
           scripts={state.scripts}
           activeScriptId={activeScript.id}
-          onSelectScript={(id) =>
-            setState((prev) => ({ ...prev, activeScriptId: id }))
-          }
+          onSelectScript={(id) => {
+            setState((prev) => ({ ...prev, activeScriptId: id }));
+            setMobileTab('prompter');
+          }}
           onCreateScript={() => {
             const id = `script-${Date.now()}`;
             setState((prev) => ({
@@ -577,6 +627,7 @@ export function App() {
               ],
               activeScriptId: id,
             }));
+            setMobileTab('editor');
           }}
           onDuplicateScript={(id) => {
             const src = state.scripts.find((s) => s.id === id);
@@ -605,32 +656,35 @@ export function App() {
               return { ...prev, scripts: remaining, activeScriptId: nextActive };
             });
           }}
-          onImportFiles={(files) => void handleImportFiles(files)}
+          onImportFiles={(files) => {
+            void handleImportFiles(files);
+            setMobileTab('prompter');
+          }}
         />
 
         <section className="center-pane" aria-label="Script Editor and Live Prompter">
           <div className="center-tabs">
-            <div className="segmented" role="group" aria-label="Workspace View">
+            <div className="segmented hide-mobile" role="group" aria-label="Workspace View">
               <button
                 type="button"
                 className={viewMode === 'split' ? 'active' : ''}
                 onClick={() => setViewMode('split')}
               >
-                <Columns2 size={13} /> Split
+                <Columns2 size={13} aria-hidden="true" /> Split
               </button>
               <button
                 type="button"
                 className={viewMode === 'edit' ? 'active' : ''}
                 onClick={() => setViewMode('edit')}
               >
-                <Edit3 size={13} /> Editor
+                <Edit3 size={13} aria-hidden="true" /> Editor
               </button>
               <button
                 type="button"
                 className={viewMode === 'preview' ? 'active' : ''}
                 onClick={() => setViewMode('preview')}
               >
-                <Eye size={13} /> Prompter
+                <Eye size={13} aria-hidden="true" /> Prompter
               </button>
             </div>
 
@@ -647,63 +701,16 @@ export function App() {
             </div>
           </div>
 
-          {viewMode === 'edit' && (
-            <div className="editor-shell">
-              <input
-                type="text"
-                className="script-title-input"
-                aria-label="Script title"
-                value={activeScript.title}
-                onChange={(e) => {
-                  const title = e.target.value;
-                  setState((prev) => ({
-                    ...prev,
-                    scripts: prev.scripts.map((s) =>
-                      s.id === activeScript.id
-                        ? { ...s, title, updatedAt: Date.now() }
-                        : s,
-                    ),
-                  }));
-                }}
-              />
-              <textarea
-                className="script-textarea"
-                aria-label="Script text"
-                placeholder="Paste your script here, or drag & drop any PDF, DOCX, DOC, RTF, TXT, MD, HTML, or SRT file..."
-                value={activeScript.content}
-                onChange={(e) => {
-                  const content = e.target.value;
-                  setState((prev) => ({
-                    ...prev,
-                    scripts: prev.scripts.map((s) =>
-                      s.id === activeScript.id
-                        ? { ...s, content, updatedAt: Date.now() }
-                        : s,
-                    ),
-                  }));
-                }}
-              />
-            </div>
-          )}
-
-          {viewMode === 'preview' && !isStageMode && (
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <PrompterStage
-                tokens={indexedScript.tokens}
-                activeTokenIndex={activeTokenIndex}
-                appearance={state.appearance}
-                isPlaying={isPlaying}
-                isAutoScroll={state.speech.kind === 'auto-scroll'}
-                isFullscreenStage={false}
-                onSeekToken={handleSeekToken}
-              >
-                {hudElement}
-              </PrompterStage>
-            </div>
-          )}
-
-          {viewMode === 'split' && (
-            <div className="split-center">
+          <div
+            className={`center-body ${
+              viewMode === 'split'
+                ? 'mode-split'
+                : viewMode === 'edit'
+                  ? 'mode-edit'
+                  : 'mode-preview'
+            }`}
+          >
+            <div className="editor-pane-wrap">
               <div className="editor-shell">
                 <input
                   type="text"
@@ -725,7 +732,7 @@ export function App() {
                 <textarea
                   className="script-textarea"
                   aria-label="Script text"
-                  placeholder="Paste your script or drop a file anywhere..."
+                  placeholder="Paste your script here, or drop any PDF, DOCX, DOC, RTF, TXT, MD, HTML, or SRT file..."
                   value={activeScript.content}
                   onChange={(e) => {
                     const content = e.target.value;
@@ -740,33 +747,32 @@ export function App() {
                   }}
                 />
               </div>
+            </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <div className="split-preview-header">
-                  <span>LIVE PROMPTER PREVIEW — CLICK ANY WORD TO SEEK</span>
-                  <span>
-                    ENGINE: {state.speech.kind.toUpperCase()} · MIRROR:{' '}
-                    {state.appearance.mirrorMode.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{ flex: 1, minHeight: 0 }}>
-                  {!isStageMode && (
-                    <PrompterStage
-                      tokens={indexedScript.tokens}
-                      activeTokenIndex={activeTokenIndex}
-                      appearance={state.appearance}
-                      isPlaying={isPlaying}
-                      isAutoScroll={state.speech.kind === 'auto-scroll'}
-                      isFullscreenStage={false}
-                      onSeekToken={handleSeekToken}
-                    >
-                      {hudElement}
-                    </PrompterStage>
-                  )}
-                </div>
+            <div className="preview-pane-wrap">
+              <div className="split-preview-header">
+                <span>LIVE PROMPTER — TAP ANY WORD TO SEEK</span>
+                <span>
+                  {state.speech.kind.toUpperCase()} · {state.appearance.mirrorMode.toUpperCase()}
+                </span>
+              </div>
+              <div className="preview-stage-host">
+                {!isStageMode && (
+                  <PrompterStage
+                    tokens={indexedScript.tokens}
+                    activeTokenIndex={activeTokenIndex}
+                    appearance={state.appearance}
+                    isPlaying={isPlaying}
+                    isAutoScroll={state.speech.kind === 'auto-scroll'}
+                    isFullscreenStage={false}
+                    onSeekToken={handleSeekToken}
+                  >
+                    {hudElement}
+                  </PrompterStage>
+                )}
               </div>
             </div>
-          )}
+          </div>
         </section>
 
         <SettingsPanel
@@ -805,6 +811,42 @@ export function App() {
           onNotify={notify}
         />
       </main>
+
+      {/* Mobile Bottom Tab Bar (<= 900px) */}
+      <nav className="mobile-tabbar" aria-label="Primary mobile navigation">
+        <button
+          type="button"
+          className={mobileTab === 'scripts' ? 'active' : ''}
+          onClick={() => setMobileTab('scripts')}
+        >
+          <FileText size={18} aria-hidden="true" />
+          <span>Scripts</span>
+        </button>
+        <button
+          type="button"
+          className={mobileTab === 'editor' ? 'active' : ''}
+          onClick={() => setMobileTab('editor')}
+        >
+          <Edit3 size={18} aria-hidden="true" />
+          <span>Editor</span>
+        </button>
+        <button
+          type="button"
+          className={mobileTab === 'prompter' ? 'active' : ''}
+          onClick={() => setMobileTab('prompter')}
+        >
+          <Eye size={18} aria-hidden="true" />
+          <span>Prompter</span>
+        </button>
+        <button
+          type="button"
+          className={mobileTab === 'settings' ? 'active' : ''}
+          onClick={() => setMobileTab('settings')}
+        >
+          <SlidersHorizontal size={18} aria-hidden="true" />
+          <span>Settings</span>
+        </button>
+      </nav>
 
       {/* Fullscreen Stage Overlay */}
       {isStageMode && (

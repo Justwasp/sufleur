@@ -147,7 +147,13 @@ export function FloatingHud({
           title="Start / Pause (Space)"
         >
           {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-          {isPlaying ? 'Stop' : engineKind === 'auto-scroll' ? 'Scroll' : 'Start Mic'}
+          {isPlaying
+            ? 'Stop'
+            : engineKind === 'auto-scroll'
+              ? 'Scroll'
+              : isFullscreenStage
+                ? 'Start Mic'
+                : 'Mic'}
         </button>
 
         <button
