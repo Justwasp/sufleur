@@ -133,6 +133,8 @@ export const DEFAULT_SPEECH_CONFIG: SpeechEngineConfig = {
   customModel: 'whisper-1',
   voskModelId: '',
   voskModelUrl: '',
+  demoVoiceURI: '',
+  demoRate: 1.0,
 };
 
 export const DEFAULT_SCRIPTS: ScriptItem[] = [

@@ -99,6 +99,10 @@ export interface SpeechEngineConfig {
   /** Vosk offline model source (IndexedDB model ID or direct URL) */
   voskModelId: string;
   voskModelUrl: string;
+  /** Demo TTS voiceURI (empty string = Auto best voice for script language) */
+  demoVoiceURI: string;
+  /** Demo TTS speaking rate (0.7..1.4) */
+  demoRate: number;
 }
 
 export interface SpeechEngineCallbacks {

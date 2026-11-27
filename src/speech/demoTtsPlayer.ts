@@ -68,10 +68,56 @@ function detectLanguageForText(text: string, fallbackLang: string): string {
   return fallbackLang || 'en-US';
 }
 
-function pickBestVoice(lang: string): SpeechSynthesisVoice | null {
+export interface SystemVoiceOption {
+  voiceURI: string;
+  name: string;
+  lang: string;
+  localService: boolean;
+}
+
+/**
+ * Returns browser SpeechSynthesis voices sorted with English & Russian voices first.
+ */
+export function listSortedSystemVoices(): SystemVoiceOption[] {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
+  const raw = window.speechSynthesis.getVoices();
+  if (!raw || raw.length === 0) return [];
+
+  const scoreLang = (lang: string) => {
+    const l = lang.toLowerCase();
+    if (l.startsWith('en-us')) return 0;
+    if (l.startsWith('en-gb')) return 1;
+    if (l.startsWith('en')) return 2;
+    if (l.startsWith('ru')) return 3;
+    return 4;
+  };
+
+  return [...raw]
+    .sort((a, b) => {
+      const diff = scoreLang(a.lang) - scoreLang(b.lang);
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name);
+    })
+    .map((v) => ({
+      voiceURI: v.voiceURI,
+      name: v.name,
+      lang: v.lang,
+      localService: v.localService,
+    }));
+}
+
+function pickBestVoice(
+  lang: string,
+  preferredVoiceURI?: string,
+): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
+
+  if (preferredVoiceURI) {
+    const exactVoice = voices.find((v) => v.voiceURI === preferredVoiceURI);
+    if (exactVoice) return exactVoice;
+  }
 
   const targetLower = lang.toLowerCase();
   const baseLang = targetLower.split('-')[0];
@@ -88,6 +134,43 @@ function pickBestVoice(lang: string): SpeechSynthesisVoice | null {
     ),
   );
   return preferred ?? pool.find((v) => v.localService) ?? pool[0];
+}
+
+/**
+ * Plays a short 2-second sample sentence to audition a selected TTS voice.
+ */
+export function previewTtsVoice(
+  voiceURI: string,
+  rate: number,
+  fallbackLang: string,
+): boolean {
+  if (
+    typeof window === 'undefined' ||
+    !('speechSynthesis' in window) ||
+    typeof SpeechSynthesisUtterance === 'undefined'
+  ) {
+    return false;
+  }
+
+  window.speechSynthesis.cancel();
+  const chosen = pickBestVoice(fallbackLang, voiceURI || undefined);
+  const lang = chosen?.lang || fallbackLang || 'en-US';
+  const sample = lang.toLowerCase().startsWith('ru')
+    ? 'Привет! Это проверка голоса для суфлёра.'
+    : 'Hello! This is a quick voice preview for Sufleur.';
+
+  const utter = new SpeechSynthesisUtterance(sample);
+  utter.lang = lang;
+  utter.rate = Math.max(0.7, Math.min(1.4, rate || 1.0));
+  if (chosen) utter.voice = chosen;
+  window.speechSynthesis.speak(utter);
+  return true;
+}
+
+export interface DemoPlayerOptions {
+  preferredLang: string;
+  voiceURI?: string;
+  rate?: number;
 }
 
 export interface DemoPlayerCallbacks {
@@ -108,12 +191,14 @@ export class DemoTtsPlayer {
   private fallbackTimer: number | null = null;
   private levelTimer: number | null = null;
   private lang = 'en-US';
+  private voiceURI = '';
+  private rate = 1.0;
   private callbacks: DemoPlayerCallbacks | null = null;
 
   public start(
     tokens: ScriptToken[],
     startAfterTokenIndex: number,
-    preferredLang: string,
+    options: DemoPlayerOptions,
     callbacks: DemoPlayerCallbacks,
   ): boolean {
     this.stop();
@@ -124,12 +209,14 @@ export class DemoTtsPlayer {
     this.phraseIndex = 0;
     this.active = true;
     this.callbacks = callbacks;
+    this.voiceURI = options.voiceURI ?? '';
+    this.rate = Math.max(0.7, Math.min(1.4, options.rate ?? 1.0));
 
     const fullPreview = phrases
       .slice(0, 4)
       .map((p) => p.text)
       .join(' ');
-    this.lang = detectLanguageForText(fullPreview, preferredLang);
+    this.lang = detectLanguageForText(fullPreview, options.preferredLang);
 
     // Subtle simulated audio-level animation while demo voice speaks
     this.levelTimer = window.setInterval(() => {
@@ -166,11 +253,10 @@ export class DemoTtsPlayer {
     const phrase = this.phrases[this.phraseIndex];
     const currentUtteranceId = this.utteranceId++;
     const utter = new SpeechSynthesisUtterance(phrase.text);
-    utter.lang = this.lang;
-    utter.rate = 1.02;
+    const voice = pickBestVoice(this.lang, this.voiceURI || undefined);
+    utter.lang = voice?.lang || this.lang;
+    utter.rate = this.rate;
     utter.pitch = 1.0;
-
-    const voice = pickBestVoice(this.lang);
     if (voice) {
       utter.voice = voice;
     }

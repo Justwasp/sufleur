@@ -13,8 +13,14 @@ import {
   Palette,
   Trash2,
   Upload,
+  Volume2,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import {
+  listSortedSystemVoices,
+  previewTtsVoice,
+  type SystemVoiceOption,
+} from '../speech/demoTtsPlayer';
 import { hfWorkerClient } from '../speech/hfWorkerClient';
 import {
   HUGGINGFACE_ASR_MODELS,
@@ -112,6 +118,9 @@ export function SettingsPanel({
   const [tab, setTab] = useState<'display' | 'speech'>('display');
   const [presetName, setPresetName] = useState('');
   const [voskModels, setVoskModels] = useState<StoredVoskModelMeta[]>([]);
+  const [systemVoices, setSystemVoices] = useState<SystemVoiceOption[]>(() =>
+    listSortedSystemVoices(),
+  );
   const [hfProgress, setHfProgress] = useState<HfDownloadProgress>(() =>
     hfWorkerClient.getState(),
   );
@@ -119,7 +128,20 @@ export function SettingsPanel({
 
   useEffect(() => {
     void listVoskModels().then(setVoskModels);
-    return hfWorkerClient.subscribe(setHfProgress);
+    const unsubHf = hfWorkerClient.subscribe(setHfProgress);
+
+    const refreshVoices = () => setSystemVoices(listSortedSystemVoices());
+    refreshVoices();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoices);
+    }
+
+    return () => {
+      unsubHf();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.removeEventListener?.('voiceschanged', refreshVoices);
+      }
+    };
   }, []);
 
   const activeHfModelId =
@@ -532,6 +554,67 @@ export function SettingsPanel({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Demo Voice (TTS) Picker */}
+            <div className="control-group">
+              <span className="group-label">
+                <span>Demo Voice (TTS)</span>
+                <span className="format-pill">{systemVoices.length} VOICES</span>
+              </span>
+
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  className="select-input"
+                  style={{ flex: 1, minInlineSize: 0 }}
+                  aria-label="Demo Voice"
+                  value={speech.demoVoiceURI}
+                  onChange={(e) => onUpdateSpeech({ demoVoiceURI: e.target.value })}
+                >
+                  <option value="">Auto (Best match for script language)</option>
+                  {systemVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name} ({v.lang})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title="Play a quick voice sample"
+                  onClick={() => {
+                    const ok = previewTtsVoice(
+                      speech.demoVoiceURI,
+                      speech.demoRate,
+                      speech.language,
+                    );
+                    if (!ok) {
+                      onNotify('Speech synthesis is unavailable in this browser.', 'error');
+                    }
+                  }}
+                >
+                  <Volume2 size={14} aria-hidden="true" />
+                  Test
+                </button>
+              </div>
+
+              <div className="field-row">
+                <label className="field-row-header" htmlFor="demo-rate-range">
+                  <span>Demo Voice Speed</span>
+                  <span className="field-value">{(speech.demoRate || 1).toFixed(2)}×</span>
+                </label>
+                <input
+                  id="demo-rate-range"
+                  type="range"
+                  min={0.7}
+                  max={1.4}
+                  step={0.05}
+                  value={speech.demoRate || 1}
+                  onChange={(e) =>
+                    onUpdateSpeech({ demoRate: Number(e.target.value) })
+                  }
+                />
+              </div>
             </div>
 
             {/* Engine Picker */}
