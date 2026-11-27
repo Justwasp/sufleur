@@ -10,12 +10,14 @@ interface VoskRecognizerLike {
 
 interface VoskModelLike {
   KaldiRecognizer: new (sampleRate: number) => VoskRecognizerLike;
+  on: (event: string, listener: (msg: { result?: boolean; error?: string }) => void) => void;
   terminate?: () => void;
 }
 
 /**
  * Fully offline streaming speech recognition in the browser via Vosk WebAssembly (vosk-browser).
  * Loads user-uploaded model archives (.tar.gz / .zip) cached in IndexedDB, or a custom CORS-enabled URL.
+ * Includes explicit worker error listening & timeout protection so invalid archives never hang silently.
  */
 export class VoskOfflineEngine implements SpeechEngine {
   public readonly kind = 'vosk-offline' as const;
@@ -45,7 +47,7 @@ export class VoskOfflineEngine implements SpeechEngine {
 
     if (!modelUrl) {
       const msg =
-        'No offline Vosk model selected. Upload a Vosk .tar.gz/.zip model (e.g. vosk-model-small-en-us-0.15) in Speech Settings.';
+        'No offline Vosk model selected. Upload a Vosk model archive or try Hugging Face AI for 1-click download.';
       callbacks.onStateChange('error', 'Offline model required');
       callbacks.onError(msg);
       return;
@@ -53,10 +55,39 @@ export class VoskOfflineEngine implements SpeechEngine {
 
     try {
       const Vosk = (await import('vosk-browser')) as unknown as {
-        createModel: (url: string, logLevel?: number) => Promise<VoskModelLike>;
+        Model: new (url: string, logLevel?: number) => VoskModelLike;
       };
 
-      const model = await Vosk.createModel(modelUrl, -1);
+      // Use Model directly so we can listen to BOTH 'load' and 'error' events + timeout
+      const model = await new Promise<VoskModelLike>((resolve, reject) => {
+        const instance = new Vosk.Model(modelUrl, -1);
+        const timer = window.setTimeout(() => {
+          instance.terminate?.();
+          reject(
+            new Error(
+              'Vosk model load timed out (35s). Open in Chrome/Safari (not an embedded webview) and ensure the archive is a valid Vosk .tar.gz or .zip.',
+            ),
+          );
+        }, 35000);
+
+        instance.on('load', (msg) => {
+          clearTimeout(timer);
+          if (msg.result) resolve(instance);
+          else reject(new Error('Vosk failed to initialize this model archive.'));
+        });
+
+        instance.on('error', (msg) => {
+          clearTimeout(timer);
+          instance.terminate?.();
+          reject(
+            new Error(
+              msg.error ||
+                'Vosk could not extract this archive (check CORS or try Hugging Face AI).',
+            ),
+          );
+        });
+      });
+
       this.model = model;
 
       const recognizer = new model.KaldiRecognizer(16000);
@@ -99,7 +130,7 @@ export class VoskOfflineEngine implements SpeechEngine {
         16000,
       );
 
-      callbacks.onStateChange('listening', 'Offline WASM active (100% local)');
+      callbacks.onStateChange('listening', 'Offline Vosk WASM active');
     } catch (err) {
       await this.stop();
       const message = `Vosk offline failed: ${err instanceof Error ? err.message : String(err)}`;

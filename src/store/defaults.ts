@@ -123,6 +123,9 @@ export const BUILTIN_PRESETS: StylePreset[] = [
 export const DEFAULT_SPEECH_CONFIG: SpeechEngineConfig = {
   kind: 'web-speech',
   language: 'en-US',
+  hfModelId: 'onnx-community/moonshine-tiny-ONNX',
+  hfCustomModelId: '',
+  hfDevice: 'auto',
   deepgramApiKey: '',
   deepgramModel: 'nova-2',
   customEndpointUrl: '',

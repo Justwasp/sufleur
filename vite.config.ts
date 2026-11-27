@@ -55,6 +55,15 @@ export default defineConfig({
         globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
+            urlPattern: /\.wasm$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'onnx-wasm-runtime',
+              expiration: { maxEntries: 6, maxAgeSeconds: 60 * 60 * 24 * 90 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'StaleWhileRevalidate',
             options: {
@@ -75,6 +84,9 @@ export default defineConfig({
       },
     }),
   ],
+  worker: {
+    format: 'es',
+  },
   build: {
     target: 'esnext',
   },

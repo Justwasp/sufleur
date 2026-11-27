@@ -12,6 +12,7 @@ export interface MicrophoneSession {
 export interface AudioCaptureCallbacks {
   onLevel?: (level: number) => void;
   onPcm16?: (pcm16: Int16Array) => void;
+  onFloat32_16k?: (samples: Float32Array) => void;
   onAudioBuffer?: (buffer: AudioBuffer) => void;
 }
 
@@ -101,9 +102,14 @@ export async function startMicrophoneCapture(
       callbacks.onAudioBuffer(event.inputBuffer);
     }
 
-    if (callbacks.onPcm16) {
+    if (callbacks.onPcm16 || callbacks.onFloat32_16k) {
       const resampled = downsampleTo16kHz(input, audioContext.sampleRate, 16000);
-      callbacks.onPcm16(floatToInt16(resampled));
+      if (callbacks.onFloat32_16k) {
+        callbacks.onFloat32_16k(resampled);
+      }
+      if (callbacks.onPcm16) {
+        callbacks.onPcm16(floatToInt16(resampled));
+      }
     }
   };
 
