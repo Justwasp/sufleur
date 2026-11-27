@@ -26,7 +26,7 @@ export default defineConfig({
         theme_color: '#090b0e',
         background_color: '#090b0e',
         display: 'standalone',
-        orientation: 'any',
+        orientation: 'portrait',
         scope: basePath,
         start_url: basePath,
         categories: ['productivity', 'utilities'],

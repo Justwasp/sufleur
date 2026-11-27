@@ -27,17 +27,25 @@ export function PrompterStage({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tokenRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   const scrollCtrlRef = useRef<SmoothScrollController | null>(null);
-  const [isNarrowViewport, setIsNarrowViewport] = useState(
-    () => typeof window !== 'undefined' && window.innerWidth <= 640,
+  const [isPhoneFormFactor, setIsPhoneFormFactor] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      Math.min(window.innerWidth, window.innerHeight) <= 640,
   );
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(max-width: 640px)');
-    const onChange = () => setIsNarrowViewport(mq.matches);
-    onChange();
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    if (typeof window === 'undefined') return;
+    const onResize = () => {
+      // Use the shorter screen axis so tilting a phone sideways never jumps font size
+      setIsPhoneFormFactor(Math.min(window.innerWidth, window.innerHeight) <= 640);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
   }, []);
 
   if (!scrollCtrlRef.current) {
@@ -119,14 +127,14 @@ export function PrompterStage({
       : `mirror-${appearance.mirrorMode}`;
 
   const effectiveFontSize = isFullscreenStage
-    ? isNarrowViewport
+    ? isPhoneFormFactor
       ? Math.max(24, Math.round(appearance.fontSize * 0.68))
       : appearance.fontSize
-    : isNarrowViewport
+    : isPhoneFormFactor
       ? Math.max(22, Math.round(appearance.fontSize * 0.54))
       : Math.max(22, Math.round(appearance.fontSize * 0.56));
 
-  const effectiveHorizontalPadding = isNarrowViewport
+  const effectiveHorizontalPadding = isPhoneFormFactor
     ? Math.min(appearance.horizontalPadding, 10)
     : appearance.horizontalPadding;
 
