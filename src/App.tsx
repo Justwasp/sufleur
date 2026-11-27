@@ -242,7 +242,11 @@ export function App() {
     const started = demoPlayerRef.current.start(
       indexedScript.tokens,
       startAfter,
-      state.speech.language,
+      {
+        preferredLang: state.speech.language,
+        voiceURI: state.speech.demoVoiceURI,
+        rate: state.speech.demoRate,
+      },
       {
         onTranscript: (update, isRepeatDemo) => {
           setHeardText(
@@ -277,6 +281,8 @@ export function App() {
     indexedScript.tokens,
     activeTokenIndex,
     state.speech.language,
+    state.speech.demoVoiceURI,
+    state.speech.demoRate,
   ]);
 
   const handleSeekToken = useCallback((tokenIndex: number) => {
