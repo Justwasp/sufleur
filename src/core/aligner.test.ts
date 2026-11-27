@@ -271,4 +271,75 @@ describe('VoiceAligner', () => {
     expect(res.status).toBe('end');
     expect(aligner.getScript().tokens[res.tokenIndex].raw).toBe('сегодня.');
   });
+
+  it('does NOT teleport back to the beginning of a long script on a short stumble mid-script', () => {
+    const script = [
+      'We want to build something remarkable for every speaker across the studio tonight.',
+      'Paragraph two covers optical glass calibration, camera framing distance, lighting balance, and glare reduction.',
+      'Paragraph three explains audio capture latency, noise suppression filters, microphone positioning, and room acoustics.',
+      'Paragraph four introduces live rehearsal metrics, cumulative session timing, and presenter remote ergonomics.',
+      'Paragraph five concludes with practical staging advice, calm breathing cadence, and natural eye contact.',
+    ].join('\n\n');
+
+    const aligner = new VoiceAligner(script);
+    const p4Start = aligner
+      .getScript()
+      .tokens.findIndex((t) => t.raw === 'introduces');
+    aligner.seekToToken(p4Start);
+    aligner.processTranscript({
+      utteranceId: 1,
+      isFinal: true,
+      text: 'introduces live rehearsal metrics',
+    });
+    const midCursor = aligner.getCursorTokenIndex();
+    expect(midCursor).toBeGreaterThan(45);
+
+    // Speaker stumbles mid-script and utters 3-4 words resembling the opening line
+    const stumble = aligner.processTranscript({
+      utteranceId: 2,
+      isFinal: true,
+      text: 'we want to build',
+    });
+    expect(stumble.moved).toBe(false);
+    expect(aligner.getCursorTokenIndex()).toBe(midCursor);
+
+    // Speaker then continues right where they stopped -> tracks smoothly without losing place
+    const recover = aligner.processTranscript({
+      utteranceId: 3,
+      isFinal: true,
+      text: 'cumulative session timing and presenter remote',
+    });
+    expect(recover.moved).toBe(true);
+    expect(recover.tokenIndex).toBeGreaterThan(midCursor);
+  });
+
+  it('weights phrases closer to the cursor higher than identical phrases far back at the start', () => {
+    const script = [
+      'Our platform delivers speed and clarity right from the opening keynote slide.',
+      'Section two reviews quarterly server uptime, regional failover drills, latency percentiles, and hardware redundancy.',
+      'Section three examines customer onboarding surveys, editorial templates, studio checklists, and script imports.',
+      'Section four begins with live teleprompter diagnostics and microphone health indicators.',
+      'After testing audio levels, our platform delivers speed and clarity for every broadcast anchor.',
+    ].join('\n\n');
+
+    const aligner = new VoiceAligner(script);
+    const s4Start = aligner.getScript().tokens.findIndex((t) => t.raw === 'diagnostics');
+    aligner.seekToToken(s4Start);
+    aligner.processTranscript({
+      utteranceId: 1,
+      isFinal: true,
+      text: 'diagnostics and microphone health indicators',
+    });
+    const stopPoint = aligner.getCursorTokenIndex();
+
+    // Phrase "our platform delivers speed and clarity" appears BOTH at token 0 (far back)
+    // AND just ahead in Section 5 -> proximity weighting must pick the nearby occurrence!
+    const jump = aligner.processTranscript({
+      utteranceId: 2,
+      isFinal: true,
+      text: 'our platform delivers speed and clarity',
+    });
+    expect(jump.moved).toBe(true);
+    expect(jump.tokenIndex).toBeGreaterThan(stopPoint);
+  });
 });

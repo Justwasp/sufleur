@@ -17,6 +17,12 @@ interface WindowMatch {
   weightedMatched: number;
 }
 
+interface RankedJumpCandidate extends WindowMatch {
+  distance: number;
+  isBackward: boolean;
+  effectiveScore: number;
+}
+
 interface PendingJump {
   targetEndUnit: number;
   score: number;
@@ -491,7 +497,7 @@ export class VoiceAligner {
       }
     }
 
-    const scored: WindowMatch[] = [];
+    const scored: RankedJumpCandidate[] = [];
     const maxUnit = this.script.units.length - 1;
 
     for (const regionStart of regions) {
@@ -509,24 +515,33 @@ export class VoiceAligner {
           match.endUnit <= this.cursorUnit &&
           match.startUnit >= Math.max(0, this.cursorUnit - this.config.localRepeatWindow);
         if (!insideRepeatZone) {
-          scored.push(match);
+          const isBackward = match.endUnit <= this.cursorUnit;
+          const distance = Math.abs(match.startUnit - Math.max(0, this.cursorUnit));
+          const penalty = this.proximityPenalty(distance, isBackward);
+          scored.push({
+            ...match,
+            distance,
+            isBackward,
+            effectiveScore: match.score - penalty,
+          });
         }
       }
     }
 
     if (scored.length === 0) return null;
 
-    // Sort by score descending, then matchedCount descending, then nearest forward from cursor
+    // Rank by proximity-weighted effectiveScore first (closer to where the speaker stopped
+    // carries higher weight than a similar phrase far back at the start of the script)
     scored.sort((a, b) => {
-      if (Math.abs(b.score - a.score) > 0.02) return b.score - a.score;
+      if (Math.abs(b.effectiveScore - a.effectiveScore) > 0.015) {
+        return b.effectiveScore - a.effectiveScore;
+      }
       if (b.matchedCount !== a.matchedCount) return b.matchedCount - a.matchedCount;
-      const distA = this.directionalDistance(a.startUnit);
-      const distB = this.directionalDistance(b.startUnit);
-      return distA - distB;
+      return this.directionalDistance(a.startUnit) - this.directionalDistance(b.startUnit);
     });
 
     // Deduplicate overlapping top matches
-    const distinct: WindowMatch[] = [];
+    const distinct: RankedJumpCandidate[] = [];
     for (const m of scored) {
       const overlaps = distinct.some(
         (d) => Math.abs(d.startUnit - m.startUnit) <= 5 || Math.abs(d.endUnit - m.endUnit) <= 5,
@@ -536,18 +551,19 @@ export class VoiceAligner {
 
     const best = distinct[0];
     const secondBest = distinct[1];
-    const margin = secondBest ? best.score - secondBest.score : 1.0;
+    const margin = secondBest
+      ? best.effectiveScore - secondBest.effectiveScore
+      : 1.0;
     const isAmbiguous = Boolean(secondBest && margin < this.config.ambiguityMargin);
 
     if (isAmbiguous) {
       // Multiple identical occurrences (e.g. repeated chorus): wait for more context words!
       // Only break tie if user has spoken >= 6 matching words inside the repeated block
       if (query.length >= 7 && best.matchedCount >= 6) {
-        // Tie-break toward nearest forward occurrence
         const forwardBest = distinct.find(
           (c) =>
             c.startUnit > this.cursorUnit &&
-            best.score - c.score < this.config.ambiguityMargin,
+            best.effectiveScore - c.effectiveScore < this.config.ambiguityMargin,
         );
         const chosen = forwardBest ?? best;
         return this.commitGlobalJump(chosen);
@@ -562,13 +578,45 @@ export class VoiceAligner {
       return null;
     }
 
-    // Unambiguous high-confidence match!
-    // Require either >= 4 matched words OR 2 consistent confirmations (hysteresis)
+    // Distance-aware confirmation gate:
+    // - Nearby jumps (<= 45 words from stop point) recover rapidly.
+    // - Far forward jumps (> 45 words) require >= 4 distinctive words or hysteresis.
+    // - Far backward jumps (> 45 words, e.g. back to the beginning of the script) require
+    //   strong distinctive evidence (>= 5 words) or sustained confirmation so a brief stumble
+    //   never teleports the speaker back to the top!
     const isConsistentWithPending =
       this.pendingJump !== null &&
       Math.abs(this.pendingJump.targetEndUnit - best.endUnit) <= 6;
 
-    if (best.matchedCount >= 4 || (best.matchedCount >= 3 && best.score >= 0.85) || isConsistentWithPending) {
+    const isFar = best.distance > 45;
+    let shouldCommit = false;
+
+    if (!isFar) {
+      shouldCommit =
+        best.matchedCount >= 4 ||
+        (best.matchedCount >= 3 &&
+          best.score >= 0.8 &&
+          best.weightedMatched >= 1.85) ||
+        isConsistentWithPending;
+    } else if (!best.isBackward) {
+      shouldCommit =
+        (best.matchedCount >= 4 &&
+          best.score >= 0.78 &&
+          best.weightedMatched >= 2.2) ||
+        (isConsistentWithPending && best.matchedCount >= 3 && best.score >= 0.8);
+    } else {
+      // Far backward jump guard: prevent accidental jump to start on 3-4 word stumble
+      shouldCommit =
+        (best.matchedCount >= 5 &&
+          best.score >= 0.82 &&
+          best.weightedMatched >= 3.0) ||
+        (isConsistentWithPending &&
+          best.matchedCount >= 4 &&
+          best.score >= 0.8 &&
+          best.weightedMatched >= 2.4);
+    }
+
+    if (shouldCommit) {
       return this.commitGlobalJump(best);
     }
 
@@ -579,6 +627,20 @@ export class VoiceAligner {
       isAmbiguous: false,
     };
     return null;
+  }
+
+  /**
+   * Smooth proximity decay from the current cursor position so phrases closer to where
+   * the speaker stopped always outrank similar phrases far away (especially back at the start).
+   */
+  private proximityPenalty(distance: number, isBackward: boolean): number {
+    if (!isBackward) {
+      if (distance <= 35) return (distance / 35) * 0.03;
+      return Math.min(0.15, 0.03 + 0.04 * Math.log2(1 + (distance - 35) / 25));
+    }
+    // Backward jumps pay a slightly higher proximity cost the farther behind the cursor they are
+    if (distance <= 35) return 0.02 + (distance / 35) * 0.04;
+    return Math.min(0.22, 0.06 + 0.06 * Math.log2(1 + (distance - 35) / 20));
   }
 
   private commitGlobalJump(match: WindowMatch): AlignmentResult {
